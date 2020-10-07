@@ -1,4 +1,4 @@
-// Taken wholesale from:
+// Taken largely from:
 // https://github.com/ethereum/EIPs/blob/master/assets/eip-712/Example.js
 // Thank you @PaulRBerg
 
@@ -26,21 +26,16 @@ function dependencies(types, primaryType, found = []) {
 
 function encodeType(typedData, primaryType) {
     const types = typedData.types;
-    console.log('aloha primaryType', primaryType);
     // Get dependencies primary first, then alphabetical
     let deps = dependencies(types, primaryType);
     deps = deps.filter(t => t !== primaryType);
     deps = [primaryType].concat(deps.sort());
-    console.log('aloha deps', deps);
 
     // Format as a string with fields
     let result = '';
     for (let type of deps) {
-        console.log('aloha type', type);
-        console.log('aloha types[type]', types[type]);
         result += `${type}(${types[type].map(({ name, type }) => `${type} ${name}`).join(',')})`;
     }
-    console.log('aloha result', result);
     return result;
 }
 
