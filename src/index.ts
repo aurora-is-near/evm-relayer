@@ -1,21 +1,24 @@
-const express = require('express');
-const cors = require('cors');
-const { NearProvider, utils } = require('near-web3-provider');
-const nearAPI = require('near-api-js');
-const { ecrecover, isValidSignature, pubToAddress, bufferToHex } = require('ethereumjs-util');
-const { signHash } = require('./eip-712-helpers');
-const web3 = require('web3');
-// demonstration of using compiled wasm
-const { add_wasm_by_example_to_string } = require('./rust/pkg/near_relayer_utils');
+import express from 'express';
+import cors from 'cors';
+import nearWeb3Provider from 'near-web3-provider';
+const { utils } = nearWeb3Provider;
+import * as nearAPI from 'near-api-js';
+import { Near, Signer } from 'near-api-js';
+import {InMemoryKeyStore, KeyStore} from "near-api-js/lib/key_stores";
+import { ecrecover, isValidSignature, pubToAddress, bufferToHex } from 'ethereumjs-util';
+import { EIP712SignedData } from './eip-712-helpers';
+import bodyParser from 'body-parser';
+// For demonstration purposes
+import { add_wasm_by_example_to_string } from '../rust/pkg/near_relayer_utils';
 
+// Basic Express JS setup with body parsing
 const app = express();
 const port = 3000;
-
-let bodyParser = require('body-parser');
+app.use(cors())
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// demonstration of using compiled wasm
+// For demonstration purposes
 const runWasm = async () => {
   const helloString = add_wasm_by_example_to_string("Hello from ");
   console.log(helloString);
@@ -25,41 +28,77 @@ runWasm();
 const NEAR_LOCAL_ACCOUNT_ID = 'relayer.test.near';
 const NEAR_LOCAL_NETWORK_ID = 'default';
 const NEAR_LOCAL_URL = 'http://34.82.212.1:3030';
-// const NEAR_EXPLORER_URL = 'https://explorer.testnet.near.org';
+const NEAR_EXPLORER_URL = 'https://explorer.testnet.near.org';
 const NEAR_LOCAL_EVM = 'evm';
 
-const nearConfig = {
+class NearObjects {
+  keyStore: InMemoryKeyStore;
+  near: nearAPI.Near;
+  nearAccount: nearAPI.Account;
+
+  private static instance: NearObjects;
+
+  private constructor() {}
+
+  static getInstance() {
+    if (!NearObjects.instance) {
+      NearObjects.instance = new NearObjects();
+    }
+    return NearObjects.instance;
+  }
+}
+
+const getNearObject = (): NearObjects => {
+  return NearObjects.getInstance();
+}
+const nearObjects = getNearObject();
+
+// let keyStore: InMemoryKeyStore;
+// let near: nearAPI.Near;
+// let nearAccount: nearAPI.Account;
+
+type NearConfig = {
+  keyStore?: KeyStore,
+  signer?: Signer,
+  deps?: { keyStore: KeyStore }
+  helperUrl?: string
+  initialBalance?: string
+  masterAccount?: string
+  networkId: string
+  walletUrl: string
+  explorerUrl: string
+  nodeUrl: string
+  contractName: string
+}
+
+const nearConfig: NearConfig = {
   networkId: NEAR_LOCAL_NETWORK_ID,
   nodeUrl: NEAR_LOCAL_URL,
   contractName: NEAR_LOCAL_ACCOUNT_ID,
   walletUrl: '',
-  helperUrl: ''
+  helperUrl: '',
+  explorerUrl: NEAR_EXPLORER_URL
 };
 
-let keyStore;
-let near;
-let nearAccount;
-
-// keystore
-const createNearKeystoreObj = async () => {
-  let privateKey = '5oN3D5kCwCwFjeGGQesEmBeR12puYxrYP12yBsEm8sdNsjaogXk9aKrUWrDBxyvaNNj75ySRd6c3GXT8nyY33CSo';
+// keystore, TODO: look at BrowserLocalStorage
+const createNearKeystoreObj = async (): Promise<InMemoryKeyStore> => {
+  const privateKey = '5oN3D5kCwCwFjeGGQesEmBeR12puYxrYP12yBsEm8sdNsjaogXk9aKrUWrDBxyvaNNj75ySRd6c3GXT8nyY33CSo';
   const ks = new nearAPI.keyStores.InMemoryKeyStore();
   const keyPair = nearAPI.KeyPair.fromString(privateKey)
   await ks.setKey('default', 'relayer.test.near', keyPair);
   return ks;
 }
-const getNearKeyStore = async () => {
-  return keyStore || await createNearKeystoreObj();
+const getNearKeyStore = async (): Promise<InMemoryKeyStore> => {
+  return nearObjects.keyStore || await createNearKeystoreObj();
 }
 
 // near
-const createNearObj = async () => {
-  const ks = await getNearKeyStore();
-  // TODO: probably remove deps here
-  return await nearAPI.connect(Object.assign({ deps: { ks }, keyStore: ks }, nearConfig))
+const createNearObj = async (): Promise<Near> => {
+  nearConfig.keyStore = await getNearKeyStore();
+  return await nearAPI.connect(nearConfig);
 }
 const getNear = async () => {
-  return near || await createNearObj();
+  return nearObjects.near || await createNearObj();
 }
 
 // account
@@ -72,10 +111,10 @@ const createNearAccountObj = async () => {
   }
 }
 const getNearAccount = async () => {
-  return nearAccount || await createNearAccountObj();
+  return nearObjects.nearAccount || await createNearAccountObj();
 }
 
-function isJson(str) {
+const isJson = (str: string): boolean => {
   try {
     JSON.parse(str);
   } catch (e) {
@@ -84,9 +123,8 @@ function isJson(str) {
   return true;
 }
 
-app.use(cors())
-
-app.post('/', async function(req, res){
+// TODO: put in a routing file
+app.post('/', async (req, res) => {
   console.log('req.body', req.body);
 
   // get caller
@@ -96,7 +134,8 @@ app.post('/', async function(req, res){
   }
   const jsonTypedData = JSON.parse(typedData);
   console.log('jsonTypedData', jsonTypedData);
-  const hash = signHash(jsonTypedData);
+  const helper = new EIP712SignedData();
+  const hash = helper.signHash(jsonTypedData);
   const signature = {
     v: req.body.signature.v,
     r: Buffer.from(req.body.signature.r.substr(2), 'hex'),
@@ -104,7 +143,8 @@ app.post('/', async function(req, res){
   }
   console.log('signature', signature);
   if (!isValidSignature(signature.v, signature.r, signature.s)) {
-    throw new Error('Received invalid signature.');
+    res.status(400).send('Received invalid signature');
+    return;
   }
   const publicKey = ecrecover(hash, signature.v, signature.r, signature.s);
   const addrBuf = pubToAddress(publicKey);
