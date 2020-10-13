@@ -5,8 +5,8 @@ const { utils } = nearWeb3Provider;
 import * as nearAPI from 'near-api-js';
 import { Near, Signer } from 'near-api-js';
 import {InMemoryKeyStore, KeyStore} from "near-api-js/lib/key_stores";
-import { ecrecover, isValidSignature, pubToAddress, bufferToHex } from 'ethereumjs-util';
-import { EIP712SignedData } from './eip-712-helpers';
+import { isValidSignature } from 'ethereumjs-util';
+import { recoverTypedSignature_v4 } from 'eth-sig-util';
 import bodyParser from 'body-parser';
 // For demonstration purposes
 import { add_wasm_by_example_to_string } from '../rust/pkg/near_relayer_utils';
@@ -52,10 +52,6 @@ const getNearObject = (): NearObjects => {
   return NearObjects.getInstance();
 }
 const nearObjects = getNearObject();
-
-// let keyStore: InMemoryKeyStore;
-// let near: nearAPI.Near;
-// let nearAccount: nearAPI.Account;
 
 type NearConfig = {
   keyStore?: KeyStore,
@@ -123,6 +119,20 @@ const isJson = (str: string): boolean => {
   return true;
 }
 
+type ParsedSignature = {
+  r: string
+  s: string
+  v: number
+}
+
+const parseSignature = (signature: string): ParsedSignature => {
+  return {
+    r: signature.substring(0, 64),
+    s: signature.substring(64, 128),
+    v: parseInt(signature.substring(128, 130), 16)
+  }
+}
+
 // TODO: put in a routing file
 app.post('/', async (req, res) => {
   console.log('req.body', req.body);
@@ -134,27 +144,27 @@ app.post('/', async (req, res) => {
   }
   const jsonTypedData = JSON.parse(typedData);
   console.log('jsonTypedData', jsonTypedData);
-  const helper = new EIP712SignedData();
-  const hash = helper.signHash(jsonTypedData);
-  const signature = {
-    v: req.body.signature.v,
-    r: Buffer.from(req.body.signature.r.substr(2), 'hex'),
-    s: Buffer.from(req.body.signature.s.substr(2), 'hex')
-  }
+  const signature = req.body.signature;
   console.log('signature', signature);
-  if (!isValidSignature(signature.v, signature.r, signature.s)) {
+  const parsedSignature = parseSignature(signature);
+  console.log('parsedSignature', parsedSignature);
+  if (!isValidSignature(parsedSignature.v, Buffer.from(parsedSignature.r, 'hex'), Buffer.from(parsedSignature.s, 'hex'))) {
+    console.log(`Received invalid signature: ${signature}`);
     res.status(400).send('Received invalid signature');
     return;
   }
-  const publicKey = ecrecover(hash, signature.v, signature.r, signature.s);
-  const addrBuf = pubToAddress(publicKey);
-  const recoveredAddress = bufferToHex(addrBuf);
-  console.log('recovered Ethereum address', recoveredAddress);
 
   const account = await getNearAccount();
   console.log(`Current NEAR account ${account.accountId} becomes…`);
   const accountEvmAddress = utils.nearAccountToEvmAddress(account.accountId);
   console.log('accountEvmAddress', accountEvmAddress);
+
+  // eth-sig-util
+  const recoveredAddress = recoverTypedSignature_v4({
+    data: jsonTypedData,
+    sig: `0x${signature}`
+  });
+  console.log('recovered Ethereum address', recoveredAddress);
 
   // Why doesn't this work?
   // console.log('Getting nonce for that account…');
