@@ -1,15 +1,20 @@
 import express from 'express';
 import cors from 'cors';
 import nearWeb3Provider from 'near-web3-provider';
+// import utils from 'near-web3-provider/src/utils';
+import BN from 'bn.js';
 const { utils } = nearWeb3Provider;
 import * as nearAPI from 'near-api-js';
 import { Near, Signer } from 'near-api-js';
 import {InMemoryKeyStore, KeyStore} from "near-api-js/lib/key_stores";
-import { isValidSignature } from 'ethereumjs-util';
-import { recoverTypedSignature_v4 } from 'eth-sig-util';
+import { FinalExecutionOutcome, FinalExecutionStatusBasic } from "near-api-js/lib/providers";
+import { isValidSignature, ecrecover } from 'ethereumjs-util';
+import { recoverTypedSignature_v4, recoverTypedMessage } from 'eth-sig-util';
 import bodyParser from 'body-parser';
 // For demonstration purposes
-import { add_wasm_by_example_to_string } from '../rust/pkg/near_relayer_utils';
+import { add_wasm_by_example_to_string, sign } from '../rust/pkg/near_relayer_utils';
+import * as RLP from 'rlp';
+// import { EIP712SignedData } from './eip-712-helpers';
 
 // Basic Express JS setup with body parsing
 const app = express();
@@ -19,11 +24,12 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // For demonstration purposes
-const runWasm = async () => {
-  const helloString = add_wasm_by_example_to_string("Hello from ");
-  console.log(helloString);
+const runWasmSign = async (json: string) => {
+  // const helloString = add_wasm_by_example_to_string("Hello from ");
+  // console.log(helloString);
+  // const signResult = sign(json);
+  // console.log('signResult', signResult);
 };
-runWasm();
 
 const NEAR_LOCAL_ACCOUNT_ID = 'relayer.test.near';
 const NEAR_LOCAL_NETWORK_ID = 'default';
@@ -142,6 +148,9 @@ app.post('/', async (req, res) => {
   if (!isJson(typedData)) {
     throw new Error('POST body\'s data is not valid JSON');
   }
+
+  // await runWasmSign(typedData);
+
   const jsonTypedData = JSON.parse(typedData);
   console.log('jsonTypedData', jsonTypedData);
   const signature = req.body.signature;
@@ -164,59 +173,45 @@ app.post('/', async (req, res) => {
     data: jsonTypedData,
     sig: `0x${signature}`
   });
-  console.log('recovered Ethereum address', recoveredAddress);
 
-  // Why doesn't this work?
-  // console.log('Getting nonce for that account…');
+  // const eip = new EIP712SignedData();
+  // const eipResult = eip.signHash(jsonTypedData);
+  // console.log('eipResult', eipResult);
+  // const parSig = parseSignature(signature);
+  // console.log('parSig', parSig);
+  // const ecrec = ecrecover(eipResult, parSig.v, Buffer.from(parSig.r, 'hex'), Buffer.from(parSig.s, 'hex'));
+  // console.log('ecrec', ecrec);
 
-  // hardcoded for counter.test.near
-  // we can try doing super simple calls/view like "increment" and "get_num" respectively
-  // const counterEvmAddress = '0xe45c4034a989e1a4ce9207e312f71e783e019eb9';
-  // const counterAddressArg = Buffer.from(counterEvmAddress.substr(2), 'hex');
-
-  // remove the '0x' and hex encode
-  // account's evm address turned into expected 20 bytes
-  // See "AddressArg" in nearcore/runtime/near-evm-runner/src/lib.rs
-  // const addressArg = Buffer.from(accountEvmAddress.substr(2), 'hex');
-
-  // In another Rust project Borsh serialized this:
-  /*
-  ViewCallArgs{
-      sender: [60, 58, 79, 182, 43, 188, 16, 177, 146, 235, 112, 195, 121, 111, 0, 161, 24, 150, 86, 28],
-      address: [60, 58, 79, 182, 43, 188, 16, 177, 146, 235, 112, 195, 121, 111, 0, 161, 24, 150, 86, 28],
-      amount: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      args: vec![],
-  };
-   */
-  // where the arrays are a mixture of using Node repl and dtool's h2a
-  // I honestly think we may need to include Borsh macros in the nearcore repo?
-
+  // Function Call
+  // let outcome: FinalExecutionOutcome;
   // try {
-  //   let nonceResult = await account.viewFunction(
-  //     NEAR_LOCAL_EVM,
-  //     'get_nonce',
-  //     {
-  //       args: [228, 92, 64, 52, 169, 137, 225, 164, 206, 146, 7, 227, 18, 247, 30, 120, 62, 1, 158, 185]
-  //     },
+  //   const zeroVal = new BN(0);
+  //   const data = [
+  //     [
+  //       'my_num_param',
+  //       '19'
+  //     ]
+  //   ];
+  //   const rlpData = RLP.encode(data);
+  //   outcome = await utils.rawFunctionCall(
+  //       account,
+  //       jsonTypedData.message.evmId,
+  //       'meta_call',
+  //       utils.encodeCallArgs(jsonTypedData.message.contractAddress.toLowerCase(), rlpData),
+  //       new BN('300000000000000'),
+  //       zeroVal
   //   );
-  //   console.log('nonceResult', nonceResult);
-  // } catch (e) {
-  //   console.error(e.message);
-  //   throw e;
+  //   console.log('outcome', outcome);
+  // } catch (error) {
+  //   console.log('aloha nwp error', error);
+  //   if (error.type === 'FunctionCallError') {
+  //     if (error.kind.EvmError.Revert) {
+  //       const message = utils.hexToString(error.kind.EvmError.Revert);
+  //       throw Error(`revert ${message}`);
+  //     }
+  //   }
+  //   throw Error(`Unknown error: ${JSON.stringify(error)}`);
   // }
-
-  // Figure out RLP encoded thing or whatever is needed, bytes-wise
-  // in nearcore/runtime/near-evm-runner/src/lib.rs ("evm-precompile" branch)
-
-  // await account.functionCall(
-  //   NEAR_LOCAL_EVM,
-  //   'meta_call_function', // or just "meta_call"?
-  //   {
-  //     symbol: tokenSearch,
-  //     spec_id: "ZDJjOWY5MjE4N2YyNGVjMDk1N2NmNTAyMGMwN2FmZGE="
-  //   },
-  //   '300000000000000'
-  // )
 
   res.sendStatus(200);
 })
