@@ -173,6 +173,7 @@ app.post('/', async (req, res) => {
     data: jsonTypedData,
     sig: `0x${signature}`
   });
+  console.log(`Recovered address: ${recoveredAddress}`);
 
   // const eip = new EIP712SignedData();
   // const eipResult = eip.signHash(jsonTypedData);
