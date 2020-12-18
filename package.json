@@ -30,7 +30,7 @@
     "express": "^4.17.1",
     "install": "^0.13.0",
     "near-api-js": "^0.30.0",
-    "near-web3-provider": "near/near-web3-provider#precompile",
+    "near-web3-provider": "1.0.6",
     "npm": "^6.14.8",
     "rlp": "^2.2.6",
     "web3": "^1.2.11",
